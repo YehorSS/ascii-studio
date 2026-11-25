@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b100d">
+  <title>ASCII Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="studio">
+    <header class="masthead">
+      <h1>ASCII<span>/</span>STUDIO</h1>
+      <div class="languages" role="group" aria-label="Language / Язык">
+        <button type="button" data-lang="ru" aria-pressed="true">RU</button>
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+    </header>
+    <div class="workspace">
+      <section class="monitor" aria-labelledby="preview-label">
+        <div class="monitor-head"><h2 id="preview-label" data-t="preview">Превью</h2><span id="dimensions"></span></div>
+        <div class="stage" id="drop-zone">
+          <canvas id="art" aria-labelledby="preview-label"></canvas>
+          <p class="drop-message" data-t="drop">Перетащи фото или видео</p>
+        </div>
+        <div class="transport" id="transport" hidden>
+          <button id="play" type="button" data-t="play">Воспроизвести</button>
+          <input id="seek" type="range" min="0" max="1" step="0.01" value="0" data-aria="position" aria-label="Позиция видео">
+          <output id="time">0:00 / 0:00</output>
+        </div>
+        <footer class="monitor-foot"><span id="filename"></span><span class="signal" data-t="local">Локальная обработка</span></footer>
+      </section>
+      <aside class="controls" aria-labelledby="control-label">
+        <h2 id="control-label" data-t="settings">Настройки</h2>
+        <div class="source">
+          <input id="file" type="file" accept="image/*,video/*" hidden>
+          <button class="solid" id="open" type="button" data-t="open">Открыть файл</button>
+          <p data-t="source">Фото или видео</p>
+        </div>
+        <div class="parameters">
+          <label for="detail" class="detail-label"><span data-t="detail">Детализация</span><output id="detail-value" for="detail">106</output></label>
+          <input id="detail" type="range" min="28" max="184" value="106">
+          <div class="range-labels"><span data-t="rough">Крупно</span><span data-t="fine">Мелко</span></div>
+          <fieldset>
+            <legend data-t="palette">Палитра</legend>
+            <div class="palettes">
+              <label><input type="radio" name="palette" value="green" checked><span data-t="green">Фосфор</span></label>
+              <label><input type="radio" name="palette" value="original"><span data-t="original">Исходная</span></label>
+              <label><input type="radio" name="palette" value="mono"><span data-t="mono">Моно</span></label>
+            </div>
+          </fieldset>
+        </div>
+        <section class="exports" aria-labelledby="export-label">
+          <h2 id="export-label" data-t="export">Экспорт</h2>
+          <div class="export-row"><button type="button" id="png">PNG</button><button type="button" id="html">HTML</button><button type="button" id="movie" hidden>WebM</button></div>
+          <div class="recording" id="recording" hidden>
+            <progress id="progress" value="0" max="1" data-aria="export" aria-label="Экспорт"></progress>
+            <button type="button" id="cancel" data-t="cancel">Отменить</button>
+          </div>
+          <p id="status" role="status"></p>
+        </section>
+      </aside>
+    </div>
+  </main>
+  <input id="scroll" type="range" min="0" max="1000" value="0" data-aria="scroll" aria-label="Прокрутка страницы" aria-orientation="vertical" hidden>
+</body>
+</html>
