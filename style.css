@@ -51,6 +51,9 @@ h2, legend { color: var(--green); font-size: 12px; text-transform: uppercase; le
 .transport { display: grid; grid-template-columns: auto minmax(20px, 1fr) auto; align-items: center; gap: 10px; border-top: 1px solid var(--edge); padding: 8px 14px; }
 .transport button { min-height: 33px; font-size: 12px; }
 .transport output { font-size: 11px; color: var(--dim); white-space: nowrap; }
+.volume { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(55px, 150px) 4ch; align-items: center; gap: 10px; color: var(--dim); font-size: 11px; }
+.volume input[type='range'] { margin: 0; }
+.volume output { text-align: right; }
 .controls { min-width: 0; border-top: 2px solid var(--green); align-self: start; background: var(--panel); }
 .controls > h2, .source, .parameters, .exports { padding: 16px; }
 .source, .parameters, .exports { border-top: 1px solid var(--edge); }
@@ -70,6 +73,8 @@ fieldset { border: 0; padding: 0; margin: 24px 0 0; min-width: 0; }
 .palettes :checked + span { color: var(--green); border-color: var(--green); }
 .palettes :focus-visible + span { outline: 2px solid var(--green); outline-offset: 3px; }
 .palettes label:has(:disabled) { opacity: .55; cursor: default; }
+.background-toggle { display: flex; align-items: center; gap: 8px; margin-top: 15px; min-height: 30px; color: var(--ink); font-size: 12px; cursor: pointer; }
+.background-toggle input { margin: 0; accent-color: var(--green); }
 .export-row button { flex: 1; font-size: 12px; }
 .recording { margin-top: 10px; display: grid; gap: 7px; }
 progress { width: 100%; accent-color: var(--green); }
