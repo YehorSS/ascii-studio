@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b100d">
   <title>ASCII Studio</title>
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=3">
   <script src="vendor/mediabunny.min.js" defer></script>
-  <script src="app.js?v=2" defer></script>
+  <script src="vendor/gifenc.js" defer></script>
+  <script src="app.js?v=3" defer></script>
 </head>
 <body>
   <main class="studio">
@@ -46,7 +47,7 @@
         </div>
         <div class="parameters">
           <label for="detail" class="detail-label"><span data-t="detail">Детализация</span><output id="detail-value" for="detail">106</output></label>
-          <input id="detail" type="range" min="28" max="320" value="106">
+          <input id="detail" type="range" min="28" max="960" value="106">
           <div class="range-labels"><span data-t="rough">Крупно</span><span data-t="fine">Мелко</span></div>
           <fieldset>
             <legend data-t="palette">Палитра</legend>
@@ -63,7 +64,7 @@
         </div>
         <section class="exports" aria-labelledby="export-label">
           <h2 id="export-label" data-t="export">Экспорт</h2>
-          <div class="export-row"><button type="button" id="png">PNG</button><button type="button" id="html">HTML</button><button type="button" id="movie" hidden>WebM</button></div>
+          <div class="export-row"><button type="button" id="png">PNG</button><button type="button" id="html">HTML</button><button type="button" id="gif">GIF</button><button type="button" id="movie" hidden>WebM</button></div>
           <div class="recording" id="recording" hidden>
             <progress id="progress" value="0" max="1" data-aria="export" aria-label="Экспорт"></progress>
             <button type="button" id="cancel" data-t="cancel">Отменить</button>

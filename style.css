@@ -75,7 +75,7 @@ fieldset { border: 0; padding: 0; margin: 24px 0 0; min-width: 0; }
 .palettes label:has(:disabled) { opacity: .55; cursor: default; }
 .background-toggle { display: flex; align-items: center; gap: 8px; margin-top: 15px; min-height: 30px; color: var(--ink); font-size: 12px; cursor: pointer; }
 .background-toggle input { margin: 0; accent-color: var(--green); }
-.export-row button { flex: 1; font-size: 12px; }
+.export-row button { flex: 1; padding-inline: 8px; font-size: 12px; }
 .recording { margin-top: 10px; display: grid; gap: 7px; }
 progress { width: 100%; accent-color: var(--green); }
 #scroll { appearance: none; position: fixed; z-index: 3; top: 10px; right: 5px; height: calc(100svh - 20px); width: 12px; margin: 0; writing-mode: vertical-lr; background: transparent; }

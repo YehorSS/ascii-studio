@@ -43,6 +43,7 @@ const maximumFps = 60;
 const cellHeight = 14;
 sampling.font = monoFont;
 const cellWidth = Math.ceil(sampling.measureText("M").width);
+const rasterLimit = 4096;
 const background = [8, 12, 10];
 const colors = { green: [85, 228, 119], mono: [226, 238, 230] };
 const littleEndian = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1;
@@ -66,6 +67,40 @@ const glyphMasks = [...glyphs].map(glyph => {
   }
   return mask;
 });
+
+function rasterCellSize(columns, rows) {
+  const maximumWidth = Math.floor(rasterLimit / columns);
+  const maximumHeight = Math.floor(rasterLimit / rows);
+  const scale = Math.min(1, maximumWidth / cellWidth, maximumHeight / cellHeight);
+  return [Math.max(2, Math.round(cellWidth * scale)), Math.max(2, Math.round(cellHeight * scale))];
+}
+
+function rasterMasks(width, height, stride) {
+  if (width === cellWidth && height === cellHeight) {
+    return glyphMasks.map(mask => mask.map(([x, y, alpha]) => [y * stride + x, alpha]));
+  }
+  return glyphMasks.map(mask => {
+    const canvas = document.createElement("canvas");
+    canvas.width = cellWidth;
+    canvas.height = cellHeight;
+    const ctx = canvas.getContext("2d");
+    const source = ctx.createImageData(cellWidth, cellHeight);
+    for (const [x, y, alpha] of mask) source.data[(y * cellWidth + x) * 4 + 3] = alpha - 1;
+    ctx.putImageData(source, 0, 0);
+    const resized = document.createElement("canvas");
+    resized.width = width;
+    resized.height = height;
+    const scaledCtx = resized.getContext("2d");
+    scaledCtx.drawImage(canvas, 0, 0, width, height);
+    const pixels = scaledCtx.getImageData(0, 0, width, height).data;
+    const scaled = [];
+    for (let i = 0; i < width * height; i++) {
+      const alpha = pixels[i * 4 + 3];
+      if (alpha) scaled.push([Math.floor(i / width) * stride + i % width, alpha + 1]);
+    }
+    return scaled;
+  });
+}
 const gpu = createGpuRenderer();
 const context = gpu ? null : art.getContext("2d");
 
@@ -109,7 +144,7 @@ function updateTime() {
   const video = source.media;
   seek.value = video.currentTime;
   byId("time").textContent = `${timestamp(video.currentTime)} / ${timestamp(video.duration)}`;
-  if (recording) byId("progress").value = video.currentTime / video.duration;
+  if (recording?.stream) byId("progress").value = video.currentTime / video.duration;
 }
 
 function updateControls() {
@@ -120,7 +155,7 @@ function updateControls() {
   detail.disabled = locked;
   removeBackground.disabled = locked;
   for (const input of paletteInputs) input.disabled = locked;
-  for (const id of ["png", "html", "movie"]) byId(id).disabled = locked || !frame;
+  for (const id of ["png", "html", "gif", "movie"]) byId(id).disabled = locked || !frame;
   byId("transport").hidden = !video;
   byId("movie").hidden = !video || !movieFormat;
   if (movieFormat) byId("movie").textContent = movieFormat.extension.toUpperCase();
@@ -170,29 +205,31 @@ function solidBackgroundMask(rgba, columns, rows, mask, queue) {
 }
 
 function createGpuRenderer() {
-  const gl = art.getContext("webgl", { premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false });
+  const gl = art.getContext("webgl", { premultipliedAlpha: true, preserveDrawingBuffer: true, antialias: false });
   if (!gl) return null;
   const program = gl.createProgram();
   const vertex = `attribute vec2 position; void main() { gl_Position = vec4(position, 0., 1.); }`;
   const fragment = `
     precision highp float;
     uniform sampler2D grid, atlas;
-    uniform vec2 size;
+    uniform vec2 size, cellSize;
     uniform vec3 tint;
     uniform bool useTint, transparent;
     void main() {
-      vec2 cellSize = vec2(${cellWidth}., ${cellHeight}.);
-      vec2 pixel = vec2(gl_FragCoord.x, size.y * cellSize.y - gl_FragCoord.y);
+      float outputHeight = ceil(size.y * cellSize.y / 2.) * 2.;
+      vec2 pixel = vec2(gl_FragCoord.x, outputHeight - gl_FragCoord.y);
       vec2 cell = floor(pixel / cellSize);
-      if (cell.x >= size.x) { gl_FragColor = vec4(vec3(8., 12., 10.) / 255., transparent ? 0. : 1.); return; }
+      if (cell.x >= size.x || cell.y >= size.y) { gl_FragColor = transparent ? vec4(0.) : vec4(vec3(8., 12., 10.) / 255., 1.); return; }
       vec4 data = texture2D(grid, (cell + .5) / size);
       float glyphData = floor(data.a * 255. + .5);
       float level = mod(glyphData, 16.);
-      vec2 glyph = mod(pixel, cellSize);
-      glyph.x += level * cellSize.x;
+      vec2 atlasCell = vec2(${cellWidth}., ${cellHeight}.);
+      vec2 glyph = clamp(mod(pixel, cellSize) / cellSize * atlasCell, vec2(.5), atlasCell - .5);
+      glyph.x += level * atlasCell.x;
       float ink = texture2D(atlas, glyph / vec2(${cellWidth * glyphs.length}., ${cellHeight}.)).a;
       vec3 color = useTint ? tint : data.rgb;
-      gl_FragColor = transparent ? vec4(color, ink * floor(glyphData / 16.) / 15.)
+      float opacity = ink * floor(glyphData / 16.) / 15.;
+      gl_FragColor = transparent ? vec4(color * opacity, opacity)
         : vec4(mix(vec3(8., 12., 10.) / 255., color, ink), 1.);
     }`;
   for (const [type, sourceCode] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]]) {
@@ -215,12 +252,12 @@ function createGpuRenderer() {
   const position = gl.getAttribLocation(program, "position");
   gl.enableVertexAttribArray(position);
   gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-  const uniforms = Object.fromEntries(["grid", "atlas", "size", "tint", "useTint", "transparent"].map(name => [name, gl.getUniformLocation(program, name)]));
+  const uniforms = Object.fromEntries(["grid", "atlas", "size", "cellSize", "tint", "useTint", "transparent"].map(name => [name, gl.getUniformLocation(program, name)]));
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
   for (const [index, name] of ["grid", "atlas"].entries()) {
     gl.activeTexture(gl.TEXTURE0 + index);
     gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
-    for (const key of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, key, gl.NEAREST);
+    for (const key of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, key, name === "atlas" ? gl.LINEAR : gl.NEAREST);
     for (const key of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, key, gl.CLAMP_TO_EDGE);
     gl.uniform1i(uniforms[name], index);
   }
@@ -231,14 +268,13 @@ function createGpuRenderer() {
   }
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.ALPHA, atlasWidth, cellHeight, 0, gl.ALPHA, gl.UNSIGNED_BYTE, atlas);
   gl.activeTexture(gl.TEXTURE0);
-  let width = 0;
-  let height = 0;
-  return (rgba, columns, rows, tint, transparent) => {
-    if (columns !== width || rows !== height) {
-      width = columns;
-      height = rows;
+  let grid;
+  return (rgba, columns, rows, tint, transparent, raster) => {
+    if (grid !== raster) {
+      grid = raster;
       gl.viewport(0, 0, art.width, art.height);
       gl.uniform2f(uniforms.size, columns, rows);
+      gl.uniform2f(uniforms.cellSize, raster.width, raster.height);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, columns, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
     } else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, columns, rows, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
     gl.uniform1i(uniforms.transparent, transparent);
@@ -248,22 +284,25 @@ function createGpuRenderer() {
   };
 }
 
-function render(input) {
+function render(input, keepTransparency = !recording || recording.extension === "gif") {
   if (!source) return;
   const { media, width, height } = source;
   const columns = Number(detail.value);
   const mode = paletteInputs.find(input => input.checked).value;
-  const rows = Math.max(1, Math.min(640, Math.round(columns * height / width * cellWidth / cellHeight)));
-  if (!raster || sample.width !== columns || sample.height !== rows) {
+  const preferredRows = Math.max(1, Math.min(1600, Math.round(columns * height / width * cellWidth / cellHeight)));
+  const [glyphWidth, glyphHeight] = rasterCellSize(columns, preferredRows);
+  const rows = Math.max(1, Math.min(1600, Math.floor(rasterLimit / glyphHeight), Math.round(columns * height / width * glyphWidth / glyphHeight)));
+  if (!raster || sample.width !== columns || sample.height !== rows || raster.width !== glyphWidth || raster.height !== glyphHeight) {
     sample.width = columns;
     sample.height = rows;
-    art.width = Math.ceil(columns * cellWidth / 2) * 2;
-    art.height = rows * cellHeight;
+    art.width = Math.ceil(columns * glyphWidth / 2) * 2;
+    art.height = Math.ceil(rows * glyphHeight / 2) * 2;
     const image = context?.createImageData(art.width, art.height);
     raster = {
       image,
+      width: glyphWidth, height: glyphHeight,
       pixels: image && new Uint32Array(image.data.buffer),
-      masks: image && glyphMasks.map(mask => mask.map(([x, y, alpha]) => [y * art.width + x, alpha])),
+      masks: image && rasterMasks(glyphWidth, glyphHeight, art.width),
       backgroundMask: new Uint8Array(columns * rows),
       queue: new Uint32Array(columns * rows),
     };
@@ -278,13 +317,18 @@ function render(input) {
   const rgba = sampling.getImageData(0, 0, columns, rows).data;
   const { image, pixels, masks } = raster;
   const cut = removeBackground.checked ? solidBackgroundMask(rgba, columns, rows, raster.backgroundMask, raster.queue) : null;
-  const transparent = Boolean(cut) && !recording;
+  let transparent = keepTransparency && Boolean(cut);
+  if (keepTransparency && removeBackground.checked && !transparent) {
+    for (let offset = 3; offset < rgba.length; offset += 4) {
+      if (rgba[offset] !== 255) { transparent = true; break; }
+    }
+  }
   pixels?.fill(transparent ? 0 : backgroundPixel);
   const sameGrid = source.video && frame?.columns === columns && frame?.rows === rows && frame?.mode === mode;
   const levels = sameGrid ? frame.levels : new Uint8Array(columns * rows);
   const tint = colors[mode];
   for (let y = 0; y < rows; y++) {
-    const rowOffset = y * cellHeight * art.width;
+    const rowOffset = y * raster.height * art.width;
     for (let x = 0; x < columns; x++) {
       const index = y * columns + x;
       const offset = index * 4;
@@ -301,7 +345,7 @@ function render(input) {
         continue;
       }
       if (!level) continue;
-      const cellOffset = rowOffset + x * cellWidth;
+      const cellOffset = rowOffset + x * raster.width;
       const dr = (tint ? tint[0] : r) - background[0];
       const dg = (tint ? tint[1] : g) - background[1];
       const db = (tint ? tint[2] : b) - background[2];
@@ -313,7 +357,7 @@ function render(input) {
       }
     }
   }
-  if (gpu) gpu(rgba, columns, rows, tint, transparent);
+  if (gpu) gpu(rgba, columns, rows, tint, transparent, raster);
   else context.putImageData(image, 0, 0);
   recording?.stream?.getVideoTracks()[0]?.requestFrame?.();
   frame = { levels, rgba, columns, rows, mode, transparent };
@@ -602,23 +646,146 @@ function saveHtml() {
 function stopRecording(outcome) {
   if (!recording || recording.outcome) return;
   recording.outcome = outcome;
-  source.media.pause();
+  recording.abort.abort();
+  if (source.video) source.media.pause();
   recording.conversion?.cancel().catch(() => {});
   if (recording.recorder?.state !== "inactive") recording.recorder?.stop();
 }
 
+function startRecording(extension) {
+  const video = source.video ? source.media : null;
+  const job = { extension, position: video?.currentTime, resume: Boolean(video && !video.paused), chunks: [], abort: new AbortController() };
+  recording = job;
+  video?.pause();
+  notify("encoding");
+  byId("progress").value = 0;
+  updateControls();
+  return job;
+}
+
 function finishRecording(job) {
   if (recording !== job) return;
-  const video = source.media;
-  video.pause();
+  const video = source.video ? source.media : null;
+  video?.pause();
   job.stream?.getVideoTracks().forEach(track => track.stop());
   recording = undefined;
-  video.currentTime = job.position;
+  if (video && video.currentTime !== job.position) video.currentTime = job.position;
   render();
-  if (job.outcome === "saved") save(job.blob ?? new Blob(job.chunks, { type: job.recorder.mimeType }), movieFormat.extension);
+  if (job.outcome === "saved") save(job.blob ?? new Blob(job.chunks, { type: job.recorder.mimeType }), job.extension);
   else notify(job.outcome || "failed");
   updateControls();
   if (job.resume) video.play().catch(() => {});
+}
+
+async function seekMedia(video, time, signal) {
+  signal.throwIfAborted();
+  if (!video.seeking && Math.abs(video.currentTime - time) < 0.0001) return;
+  const listeners = new AbortController();
+  const options = { signal: listeners.signal };
+  try {
+    await new Promise((resolve, reject) => {
+      video.addEventListener("seeked", resolve, options);
+      video.addEventListener("error", reject, options);
+      signal.addEventListener("abort", () => reject(signal.reason), options);
+      video.currentTime = time;
+    });
+  } finally { listeners.abort(); }
+}
+
+async function* gifFrames(signal) {
+  if (!source.video) {
+    yield { delay: 0, progress: 1 };
+    return;
+  }
+  const video = source.media;
+  if (source.gif) {
+    for (const [index, time] of video.times.entries()) {
+      signal.throwIfAborted();
+      const { image } = await video.decoder.decode({ frameIndex: index });
+      const end = video.times[index + 1] ?? video.duration;
+      try { yield { image, delay: (end - time) * 1000, progress: end / video.duration }; }
+      finally { image.close(); }
+    }
+    return;
+  }
+
+  // Whole centiseconds keep GIF playback in sync with the source duration.
+  let fps = 25;
+  let index = 0;
+  const at = index => index / fps;
+  const length = () => Math.ceil(video.duration * fps - 0.000001);
+  const timing = index => {
+    const end = Math.min(video.duration, at(index + 1));
+    return { delay: Math.max(10, (Math.round(end * 100) - Math.round(at(index) * 100)) * 10), progress: end / video.duration };
+  };
+  const media = window.Mediabunny;
+  if (media && window.VideoDecoder) {
+    const input = new media.Input({ formats: media.ALL_FORMATS, source: new media.BlobSource(source.file) });
+    try {
+      const track = await input.getPrimaryVideoTrack();
+      if (track) {
+        const { averagePacketRate } = await track.computePacketStats(60);
+        if (Number.isFinite(averagePacketRate) && averagePacketRate > 0) fps = Math.min(fps, Math.max(1, Math.round(averagePacketRate)));
+        const first = await track.getFirstTimestamp();
+        const timestamps = function* () {
+          for (let i = 0; i < length(); i++) yield Math.max(first, at(i));
+        };
+        for await (const sample of new media.VideoSampleSink(track).samplesAtTimestamps(timestamps())) {
+          if (!sample) break;
+          try {
+            signal.throwIfAborted();
+            yield { image: sample.toCanvasImageSource(), ...timing(index) };
+          } finally { sample.close(); }
+          index++;
+        }
+      }
+    } catch (error) {
+      signal.throwIfAborted();
+      console.warn("Using browser seeking for GIF export:", error);
+    } finally { input.dispose(); }
+  }
+  for (; index < length(); index++) {
+    await seekMedia(video, at(index), signal);
+    yield timing(index);
+  }
+}
+
+async function exportGif() {
+  if (recording || !frame || !window.gifenc) return;
+  const { GIFEncoder, quantize, applyPalette } = window.gifenc;
+  const job = startRecording("gif");
+  const canvas = document.createElement("canvas");
+  canvas.width = art.width;
+  canvas.height = art.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const encoder = GIFEncoder();
+  const transparent = removeBackground.checked;
+  try {
+    frame = undefined;
+    for await (const { image, delay, progress } of gifFrames(job.abort.signal)) {
+      job.abort.signal.throwIfAborted();
+      render(image);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(art, 0, 0);
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const palette = quantize(data, transparent ? 255 : 256);
+      const indices = applyPalette(data, palette);
+      if (transparent) {
+        for (let i = 0; i < indices.length; i++) indices[i] = data[i * 4 + 3] < 96 ? 0 : indices[i] + 1;
+        palette.unshift([0, 0, 0]);
+      }
+      encoder.writeFrame(indices, canvas.width, canvas.height, { palette, delay, transparent, transparentIndex: 0, dispose: transparent ? 2 : 1 });
+      byId("progress").value = progress;
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    if (!job.outcome && byId("progress").value > 0) {
+      encoder.finish();
+      job.blob = new Blob([encoder.bytesView()], { type: "image/gif" });
+      job.outcome = "saved";
+    }
+  } catch (error) {
+    if (!job.outcome) console.warn("GIF export failed:", error);
+  } finally { finishRecording(job); }
 }
 
 async function encodeFrameByFrame(job) {
@@ -683,12 +850,7 @@ async function encodeFrameByFrame(job) {
 async function recordVideo() {
   if (!movieFormat || recording || !source?.video) return;
   const video = source.media;
-  const job = { position: video.currentTime, resume: !video.paused, chunks: [] };
-  recording = job;
-  video.pause();
-  notify("encoding");
-  byId("progress").value = 0;
-  updateControls();
+  const job = startRecording(movieFormat.extension);
   try {
     if (await encodeFrameByFrame(job)) return finishRecording(job);
     notify("recording");
@@ -707,15 +869,7 @@ async function recordVideo() {
     }
     await audio?.context.resume();
     if (job.outcome) return finishRecording(job);
-    if (video.currentTime !== 0) {
-      const listeners = new AbortController();
-      const start = new Promise((resolve, reject) => {
-        video.addEventListener("seeked", resolve, { signal: listeners.signal });
-        video.addEventListener("error", reject, { signal: listeners.signal });
-      });
-      video.currentTime = 0;
-      try { await start; } finally { listeners.abort(); }
-    }
+    await seekMedia(video, 0, job.abort.signal);
     if (job.outcome) return finishRecording(job);
     render();
     job.stream = art.captureStream(maximumFps);
@@ -772,6 +926,7 @@ volume.oninput = () => {
 };
 byId("png").onclick = () => art.toBlob(blob => save(blob, "png"));
 byId("html").onclick = saveHtml;
+byId("gif").onclick = exportGif;
 byId("movie").onclick = recordVideo;
 byId("cancel").onclick = () => stopRecording("canceled");
 for (const button of document.querySelectorAll("[data-lang]")) {
