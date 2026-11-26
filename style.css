@@ -50,7 +50,8 @@ h2, legend { color: var(--green); font-size: 12px; text-transform: uppercase; le
 .drop-message { position: relative; z-index: 1; display: none; margin: 0; background: var(--bg); color: var(--green); padding: 13px 18px; border: 1px solid var(--green); }
 .stage[data-drag] .drop-message, .stage[data-empty] .drop-message { display: block; }
 .stage[data-drag] { outline: 2px dashed var(--green); outline-offset: -5px; }
-.stage[data-drag] canvas { opacity: .45; }
+.stage canvas { opacity: var(--preview-opacity, 1); }
+.stage[data-drag] canvas { opacity: calc(.45 * var(--preview-opacity, 1)); }
 #art[data-alternate-preview] { opacity: 0; }
 #tone-preview, #zoom-preview { inset: 50% auto auto 50%; transform: translate(-50%, -50%); object-fit: fill; padding: 0; pointer-events: none; }
 #zoom-preview { image-rendering: pixelated; }

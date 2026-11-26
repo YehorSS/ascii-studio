@@ -108,7 +108,11 @@ const toneContext = tonePreview.getContext("2d");
 const zoomPreview = byId("zoom-preview");
 const zoomContext = zoomPreview.getContext("2d");
 const zoomButton = byId("zoom");
-const glyphCoverage = glyphMasks.map(mask => mask.reduce((sum, entry) => sum + entry[2] - 1, 0) / (255 * cellWidth * cellHeight));
+// Average glyph light before display gamma so thin, bright strokes stay visible.
+const glyphCoverage = glyphMasks.map(mask => {
+  const light = mask.reduce((sum, [, , alpha]) => sum + ((alpha - 1) / 255) ** 2.2, 0);
+  return (light / (cellWidth * cellHeight)) ** (1 / 2.2);
+});
 let toneImage;
 let previewBounds;
 let zoomed = false;
@@ -384,13 +388,14 @@ function drawPreview() {
   const height = art.height * scale;
   // MediaRecorder captures the painted canvas, so it needs the actual canvas visible.
   const inspect = zoomed && !recording?.live;
-  // Average glyph coverage before shrinking a grid finer than the display can resolve.
-  const useTone = !inspect && !recording?.live && devicePixelRatio * Math.min(width / columns, height / rows) < 2.5;
-  tonePreview.hidden = !useTone;
+  const pixelsPerGlyph = devicePixelRatio * Math.min(width / columns, height / rows);
+  const tone = inspect || recording?.live ? 0 : Math.max(0, Math.min(1, 3 - pixelsPerGlyph));
+  tonePreview.hidden = tone === 0;
   zoomPreview.hidden = !inspect;
-  art.toggleAttribute("data-alternate-preview", useTone || inspect);
+  art.toggleAttribute("data-alternate-preview", tone === 1 || inspect);
+  art.style.setProperty("--preview-opacity", transparent ? 1 - tone : 1);
   if (inspect) { drawZoom(); return; }
-  if (!useTone) return;
+  if (!tone) return;
   if (toneImage?.width !== columns || toneImage.height !== rows) {
     tonePreview.width = columns;
     tonePreview.height = rows;
@@ -398,6 +403,7 @@ function drawPreview() {
   }
   tonePreview.style.width = `${width}px`;
   tonePreview.style.height = `${height}px`;
+  tonePreview.style.setProperty("--preview-opacity", tone);
   const tint = colors[mode];
   const pixels = toneImage.data;
   for (let i = 0; i < levels.length; i++) {
