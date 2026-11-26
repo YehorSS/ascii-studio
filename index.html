@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b100d">
   <title>ASCII Studio</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
   <script src="vendor/mediabunny.min.js" defer></script>
   <script src="vendor/gifenc.js" defer></script>
-  <script src="app.js?v=3" defer></script>
+  <script src="app.js?v=4" defer></script>
 </head>
 <body>
   <main class="studio">
@@ -21,9 +21,11 @@
     </header>
     <div class="workspace">
       <section class="monitor" aria-labelledby="preview-label">
-        <div class="monitor-head"><h2 id="preview-label" data-t="preview">Превью</h2><span id="dimensions"></span></div>
+        <div class="monitor-head"><h2 id="preview-label" data-t="preview">Превью</h2><div class="preview-tools"><span id="dimensions"></span><button id="zoom" type="button" aria-pressed="false" data-t="zoom">Лупа</button></div></div>
         <div class="stage" id="drop-zone">
           <canvas id="art" aria-labelledby="preview-label"></canvas>
+          <canvas id="tone-preview" aria-hidden="true" hidden></canvas>
+          <canvas id="zoom-preview" aria-hidden="true" hidden></canvas>
           <p class="drop-message" data-t="drop">Перетащи фото, видео или GIF</p>
         </div>
         <div class="transport" id="transport" hidden>

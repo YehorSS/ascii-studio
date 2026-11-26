@@ -5,6 +5,7 @@ Turn photos and videos into colored ASCII art in the browser. Files stay on your
 [Open ASCII Studio](https://yehorss.github.io/ascii-studio/)
 
 - Work with photos, videos, and animated GIFs. Adjust the detail up to 960 columns and choose the original colors, green phosphor, or monochrome.
+- Use Zoom to inspect dense ASCII at readable glyph size. GIF export redraws the glyphs with more pixels per character where needed.
 - Remove a solid background and export transparent PNG, HTML, or GIF. HTML keeps the characters as text.
 - Export a photo as a still GIF or turn video into an animated GIF at up to 25 fps. Animated GIF inputs keep their frame timing.
 - Export video at up to 60 fps with adjustable audio volume. The browser chooses MP4 or WebM. Keep the tab open until export finishes.

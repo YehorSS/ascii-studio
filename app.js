@@ -2,7 +2,7 @@
 
 const copy = {
   ru: {
-    preview: "Превью", drop: "Перетащи фото, видео или GIF", local: "Локальная обработка", settings: "Настройки",
+    preview: "Превью", zoom: "Лупа", drop: "Перетащи фото, видео или GIF", local: "Локальная обработка", settings: "Настройки",
     open: "Открыть файл", source: "Фото, видео или GIF", detail: "Детализация", rough: "Крупно", fine: "Мелко", volume: "Громкость",
     palette: "Палитра", green: "Фосфор", original: "Исходная", mono: "Моно", export: "Экспорт", position: "Позиция видео",
     play: "Воспроизвести", pause: "Пауза", demo: "Демо · андроид", cancel: "Отменить", loading: "Открываем файл…",
@@ -14,7 +14,7 @@ const copy = {
     saved: "Файл готов.", canceled: "Экспорт отменён.", scroll: "Прокрутка страницы",
   },
   en: {
-    preview: "Preview", drop: "Drop a photo, video or GIF", local: "Processed locally", settings: "Settings",
+    preview: "Preview", zoom: "Zoom", drop: "Drop a photo, video or GIF", local: "Processed locally", settings: "Settings",
     open: "Open file", source: "Photo, video or GIF", detail: "Detail", rough: "Coarse", fine: "Fine", volume: "Volume",
     palette: "Palette", green: "Phosphor", original: "Original", mono: "Mono", export: "Export", position: "Video position",
     play: "Play", pause: "Pause", demo: "Demo · android", cancel: "Cancel", loading: "Opening file…",
@@ -103,6 +103,17 @@ function rasterMasks(width, height, stride) {
 }
 const gpu = createGpuRenderer();
 const context = gpu ? null : art.getContext("2d");
+const tonePreview = byId("tone-preview");
+const toneContext = tonePreview.getContext("2d");
+const zoomPreview = byId("zoom-preview");
+const zoomContext = zoomPreview.getContext("2d");
+const zoomButton = byId("zoom");
+const glyphCoverage = glyphMasks.map(mask => mask.reduce((sum, entry) => sum + entry[2] - 1, 0) / (255 * cellWidth * cellHeight));
+let toneImage;
+let previewBounds;
+let zoomed = false;
+let zoomX = 0.5;
+let zoomY = 0.5;
 
 let language = "ru";
 let statusKey = "";
@@ -150,6 +161,7 @@ function updateTime() {
 function updateControls() {
   const video = source?.video ? source.media : null;
   const locked = Boolean(recording) || loading;
+  zoomButton.disabled = !frame;
   byId("open").disabled = locked;
   byId("file").disabled = locked;
   detail.disabled = locked;
@@ -361,6 +373,82 @@ function render(input, keepTransparency = !recording || recording.extension === 
   else context.putImageData(image, 0, 0);
   recording?.stream?.getVideoTracks()[0]?.requestFrame?.();
   frame = { levels, rgba, columns, rows, mode, transparent };
+  drawPreview();
+}
+
+function drawPreview() {
+  if (!frame || !previewBounds) return;
+  const { levels, rgba, columns, rows, mode, transparent } = frame;
+  const scale = Math.min(previewBounds.width / art.width, previewBounds.height / art.height);
+  const width = art.width * scale;
+  const height = art.height * scale;
+  // MediaRecorder captures the painted canvas, so it needs the actual canvas visible.
+  const inspect = zoomed && !recording?.live;
+  // Average glyph coverage before shrinking a grid finer than the display can resolve.
+  const useTone = !inspect && !recording?.live && devicePixelRatio * Math.min(width / columns, height / rows) < 2.5;
+  tonePreview.hidden = !useTone;
+  zoomPreview.hidden = !inspect;
+  art.toggleAttribute("data-alternate-preview", useTone || inspect);
+  if (inspect) { drawZoom(); return; }
+  if (!useTone) return;
+  if (toneImage?.width !== columns || toneImage.height !== rows) {
+    tonePreview.width = columns;
+    tonePreview.height = rows;
+    toneImage = toneContext.createImageData(columns, rows);
+  }
+  tonePreview.style.width = `${width}px`;
+  tonePreview.style.height = `${height}px`;
+  const tint = colors[mode];
+  const pixels = toneImage.data;
+  for (let i = 0; i < levels.length; i++) {
+    const offset = i * 4;
+    const coverage = glyphCoverage[levels[i]];
+    for (let channel = 0; channel < 3; channel++) {
+      const color = tint ? tint[channel] : rgba[offset + channel];
+      pixels[offset + channel] = transparent ? color : background[channel] + (color - background[channel]) * coverage;
+    }
+    const alpha = gpu ? (rgba[offset + 3] >> 4) * 17 : rgba[offset + 3];
+    pixels[offset + 3] = transparent ? alpha * coverage : 255;
+  }
+  toneContext.putImageData(toneImage, 0, 0);
+}
+
+function drawZoom() {
+  const { levels, rgba, columns, rows, mode, transparent } = frame;
+  const across = Math.max(1, Math.min(columns, Math.floor(previewBounds.width / cellWidth)));
+  const down = Math.max(1, Math.min(rows, Math.floor(previewBounds.height / cellHeight)));
+  const startX = Math.round((columns - across) * zoomX);
+  const startY = Math.round((rows - down) * zoomY);
+  const width = across * cellWidth;
+  const height = down * cellHeight;
+  if (zoomPreview.width !== width || zoomPreview.height !== height) {
+    zoomPreview.width = width;
+    zoomPreview.height = height;
+    zoomPreview.style.width = `${width}px`;
+    zoomPreview.style.height = `${height}px`;
+  }
+  zoomContext.globalAlpha = 1;
+  if (transparent) zoomContext.clearRect(0, 0, width, height);
+  else {
+    zoomContext.fillStyle = "#080c0a";
+    zoomContext.fillRect(0, 0, width, height);
+  }
+  zoomContext.font = monoFont;
+  zoomContext.textAlign = "center";
+  zoomContext.textBaseline = "middle";
+  const tint = colors[mode];
+  if (tint) zoomContext.fillStyle = `rgb(${tint.join(",")})`;
+  for (let y = 0; y < down; y++) {
+    for (let x = 0; x < across; x++) {
+      const index = (startY + y) * columns + startX + x;
+      const level = levels[index];
+      if (!level) continue;
+      const offset = index * 4;
+      if (!tint) zoomContext.fillStyle = `rgb(${rgba[offset]},${rgba[offset + 1]},${rgba[offset + 2]})`;
+      if (transparent) zoomContext.globalAlpha = (gpu ? (rgba[offset + 3] >> 4) * 17 : rgba[offset + 3]) / 255;
+      zoomContext.fillText(glyphs[level], (x + 0.5) * cellWidth, (y + 0.54) * cellHeight);
+    }
+  }
 }
 
 function scheduleRender() {
@@ -753,11 +841,16 @@ async function* gifFrames(signal) {
 async function exportGif() {
   if (recording || !frame || !window.gifenc) return;
   const { GIFEncoder, quantize, applyPalette } = window.gifenc;
+  const { columns, rows } = frame;
   const job = startRecording("gif");
-  const canvas = document.createElement("canvas");
-  canvas.width = art.width;
-  canvas.height = art.height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  // Budget the indexed GIF bitmap and rasterize the glyphs again at its native size.
+  const ratio = raster.height / raster.width;
+  const glyphWidth = Math.max(2, Math.floor(Math.min(cellWidth, cellHeight / ratio, 8192 / columns, 8192 / (rows * ratio), Math.sqrt(36_000_000 / (columns * rows * ratio)))));
+  const glyphHeight = Math.max(2, Math.min(Math.floor(8192 / rows), Math.floor(36_000_000 / (columns * rows * glyphWidth)), Math.round(glyphWidth * ratio)));
+  const width = columns * glyphWidth;
+  const height = rows * glyphHeight;
+  const masks = rasterMasks(glyphWidth, glyphHeight, width).map(mask => mask.filter(([, alpha]) => alpha >= 96));
+  const bitmap = new Uint8Array(width * height);
   const encoder = GIFEncoder();
   const transparent = removeBackground.checked;
   try {
@@ -765,16 +858,25 @@ async function exportGif() {
     for await (const { image, delay, progress } of gifFrames(job.abort.signal)) {
       job.abort.signal.throwIfAborted();
       render(image);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(art, 0, 0);
-      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const palette = quantize(data, transparent ? 255 : 256);
-      const indices = applyPalette(data, palette);
-      if (transparent) {
-        for (let i = 0; i < indices.length; i++) indices[i] = data[i * 4 + 3] < 96 ? 0 : indices[i] + 1;
-        palette.unshift([0, 0, 0]);
+      const { levels, rgba, mode } = frame;
+      const tint = colors[mode];
+      const palette = tint ? [tint] : quantize(rgba, 255);
+      const indices = tint ? null : applyPalette(rgba, palette);
+      palette.unshift(transparent ? [0, 0, 0] : background);
+      bitmap.fill(0);
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < columns; x++) {
+          const index = y * columns + x;
+          const level = levels[index];
+          if (!level) continue;
+          const alpha = gpu ? (rgba[index * 4 + 3] >> 4) * 17 : rgba[index * 4 + 3];
+          if (frame.transparent && alpha < 96) continue;
+          const origin = y * glyphHeight * width + x * glyphWidth;
+          const color = indices ? indices[index] + 1 : 1;
+          for (const entry of masks[level]) bitmap[origin + entry[0]] = color;
+        }
       }
-      encoder.writeFrame(indices, canvas.width, canvas.height, { palette, delay, transparent, transparentIndex: 0, dispose: transparent ? 2 : 1 });
+      encoder.writeFrame(bitmap, width, height, { palette, delay, transparent, transparentIndex: 0, dispose: transparent ? 2 : 1 });
       byId("progress").value = progress;
       await new Promise(resolve => setTimeout(resolve, 0));
     }
@@ -871,6 +973,7 @@ async function recordVideo() {
     if (job.outcome) return finishRecording(job);
     await seekMedia(video, 0, job.abort.signal);
     if (job.outcome) return finishRecording(job);
+    job.live = true;
     render();
     job.stream = art.captureStream(maximumFps);
     for (const track of audio?.destination.stream.getAudioTracks() ?? []) job.stream.addTrack(track);
@@ -927,6 +1030,19 @@ volume.oninput = () => {
 byId("png").onclick = () => art.toBlob(blob => save(blob, "png"));
 byId("html").onclick = saveHtml;
 byId("gif").onclick = exportGif;
+zoomButton.onclick = () => {
+  zoomed = !zoomed;
+  zoomButton.ariaPressed = String(zoomed);
+  zone.toggleAttribute("data-zoom", zoomed);
+  drawPreview();
+};
+zoomButton.onkeydown = event => {
+  if (!zoomed || !event.key.startsWith("Arrow")) return;
+  event.preventDefault();
+  if (event.key === "ArrowLeft" || event.key === "ArrowRight") zoomX = Math.max(0, Math.min(1, zoomX + (event.key === "ArrowLeft" ? -0.08 : 0.08)));
+  else zoomY = Math.max(0, Math.min(1, zoomY + (event.key === "ArrowUp" ? -0.08 : 0.08)));
+  drawPreview();
+};
 byId("movie").onclick = recordVideo;
 byId("cancel").onclick = () => stopRecording("canceled");
 for (const button of document.querySelectorAll("[data-lang]")) {
@@ -941,6 +1057,15 @@ zone.addEventListener("dragover", event => {
   event.dataTransfer.dropEffect = recording ? "none" : "copy";
   if (!recording) zone.dataset.drag = "";
 });
+function positionZoom(event) {
+  if (!zoomed) return;
+  const bounds = zone.getBoundingClientRect();
+  zoomX = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+  zoomY = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+  drawPreview();
+}
+zone.addEventListener("pointerdown", positionZoom);
+zone.addEventListener("pointermove", event => { if (event.pointerType === "mouse" || event.buttons) positionZoom(event); });
 zone.addEventListener("dragleave", event => {
   if (!zone.contains(event.relatedTarget)) delete zone.dataset.drag;
 });
@@ -963,6 +1088,11 @@ scrollControl.oninput = () => scrollTo(0, Number(scrollControl.value) / 1000 * s
 window.addEventListener("scroll", updateScroll, { passive: true });
 window.addEventListener("resize", updateScroll);
 new ResizeObserver(updateScroll).observe(document.querySelector("main"));
+new ResizeObserver(() => {
+  const padding = Number.parseFloat(getComputedStyle(art).paddingLeft) * 2;
+  previewBounds = { width: art.clientWidth - padding, height: art.clientHeight - padding };
+  drawPreview();
+}).observe(zone);
 
 let preferred;
 try { preferred = localStorage.getItem("ascii-language"); } catch { /* Local file storage may be unavailable. */ }
